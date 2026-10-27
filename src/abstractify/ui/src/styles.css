@@ -1,0 +1,54 @@
+:root {
+  --bg: #070b12;
+  --panel: #0c121c;
+  --panel-2: #101826;
+  --cyan: #20e3c8;
+  --cyan-dim: #0d3f3c;
+  --cyan-glow: rgba(32, 227, 200, 0.35);
+  --text: #d6f7f1;
+  --muted: #6d8f8a;
+  --line: #163038;
+  --danger: #ff5c8a;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1c3a40;
+  border-radius: 8px;
+}

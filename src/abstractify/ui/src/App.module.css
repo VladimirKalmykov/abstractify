@@ -1,0 +1,82 @@
+.shell {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  height: 100%;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 18px 18px 10px;
+}
+
+.logo {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: 0 0 12px var(--cyan-glow);
+  font-size: 13px;
+}
+
+.tag {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.side {
+  background: linear-gradient(180deg, #0b111a 0%, #080c13 100%);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tab {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  padding: 8px 0;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.tabActive {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.canvasWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.hint {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+  letter-spacing: 0.04em;
+}
