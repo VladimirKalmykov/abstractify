@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from abstractify import __version__
@@ -50,6 +54,29 @@ def main(argv: list[str] | None = None) -> int:
     p_ui.add_argument("--port", type=int, default=0)
     p_ui.add_argument("--open", action="store_true")
     p_ui.set_defaults(func=_cmd_ui)
+
+    p_start = sub.add_parser(
+        "start",
+        help="Run MCP HTTP serve and the localhost UI together (idle-shutdown after --timeout seconds unless --always-on)",
+    )
+    p_start.add_argument("path", nargs="?", default=".")
+    p_start.add_argument(
+        "--always-on",
+        action="store_true",
+        help="Disable idle self-shutdown; keep running until SIGINT/SIGTERM",
+    )
+    p_start.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        metavar="SECONDS",
+        help="Idle self-shutdown after SECONDS with no MCP or UI requests (default: 3600). Ignored with --always-on.",
+    )
+    p_start.set_defaults(func=_cmd_start)
+
+    p_status = sub.add_parser("status", help="Check whether serve and UI are up")
+    p_status.add_argument("path", nargs="?", default=".")
+    p_status.set_defaults(func=_cmd_status)
 
     p_aff = sub.add_parser(
         "affected",
@@ -204,6 +231,124 @@ def _cmd_ui(args: argparse.Namespace) -> int:
     root = _root(args.path)
     run_ui(root, host=args.host, port=args.port or None, open_browser=args.open)
     return 0
+
+
+def _stop_children(*procs: subprocess.Popen) -> None:
+    for proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+    deadline = time.time() + 3
+    for proc in procs:
+        while proc.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
+    from abstractify.activity import last_activity, touch_activity
+    from abstractify.config import load_config
+
+    root = _root(args.path)
+    cfg = load_config(root)
+    host = cfg.ui_host or "127.0.0.1"
+    serve_port = cfg.mcp_port
+    ui_port = cfg.ui_port
+    exe = [sys.executable, "-m", "abstractify"]
+    serve = subprocess.Popen(
+        exe
+        + [
+            "serve",
+            str(root),
+            "--transport",
+            "http",
+            "--host",
+            host,
+            "--port",
+            str(serve_port),
+        ],
+        stdout=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    ui = subprocess.Popen(
+        exe + ["ui", str(root), "--host", host, "--port", str(ui_port)],
+        stdout=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    stopping = False
+    idle_exit = False
+
+    def _on_signal(_signum: int, _frame: object) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGINT, _on_signal)
+    signal.signal(signal.SIGTERM, _on_signal)
+    touch_activity(root)
+    print(
+        f"abstractify start: services started (serve on {host}:{serve_port}, ui on {host}:{ui_port})",
+        file=sys.stderr,
+    )
+    try:
+        while not stopping:
+            for name, proc in (("serve", serve), ("ui", ui)):
+                code = proc.poll()
+                if code is not None:
+                    print(
+                        f"abstractify start: services died ({name} exit {code})",
+                        file=sys.stderr,
+                    )
+                    _stop_children(serve, ui)
+                    return 1
+            if not args.always_on and time.time() - last_activity(root) >= args.timeout:
+                print(
+                    "abstractify start: shutting down due to inactivity",
+                    file=sys.stderr,
+                )
+                idle_exit = True
+                break
+            time.sleep(0.2)
+    finally:
+        _stop_children(serve, ui)
+    return 0 if stopping or idle_exit else 1
+
+
+def _probe(port: int, path: str) -> bool:
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
+        conn.request("GET", path)
+        conn.getresponse()
+        conn.close()
+        return True
+    except ConnectionRefusedError:
+        return False
+    except TimeoutError:
+        return True
+    except OSError:
+        return False
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    from abstractify.config import Config, load_config
+
+    path = Path(args.path).resolve()
+    try:
+        cfg = load_config(_root(str(path)))
+    except FileNotFoundError:
+        cfg = Config()
+    serve_up = _probe(cfg.mcp_port, "/mcp")
+    ui_up = _probe(cfg.ui_port, "/")
+    if serve_up and ui_up:
+        print("abstractify status: connected")
+        return 0
+    if not serve_up and not ui_up:
+        print("abstractify status: disconnected")
+    elif not serve_up:
+        print("abstractify status: disconnected (serve down)")
+    else:
+        print("abstractify status: disconnected (ui down)")
+    return 1
 
 
 def _cmd_affected(args: argparse.Namespace) -> int:

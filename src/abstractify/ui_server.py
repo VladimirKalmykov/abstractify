@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from abstractify.activity import ActivityASGI
 from abstractify.size import GraphTooLarge
 from abstractify.store import Store, open_store
 
@@ -138,7 +139,7 @@ def run_ui(
     # Localhost-only by default: refuse non-loopback unless explicitly 127.0.0.1/localhost
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("UI must bind to localhost (127.0.0.1). Refusing host=" + host)
-    app = build_app(store)
+    app = ActivityASGI(build_app(store), store.root)
     url = f"http://{host}:{port}"
     print(json.dumps({"ok": True, "url": url, "root": str(root)}))
     if open_browser:

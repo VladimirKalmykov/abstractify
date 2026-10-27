@@ -312,10 +312,21 @@ def run_mcp(
     server = build_server(store)
     if transport == "http":
         listen = port or store.cfg.mcp_port
-        import asyncio
+        import sys
 
-        asyncio.run(server.run_streamable_http_async(host=host, port=listen))
+        import uvicorn
+
+        from abstractify.activity import ActivityASGI
+
+        print(
+            f"abstractify serve: MCP server started (http {host}:{listen})",
+            file=sys.stderr,
+        )
+        app = ActivityASGI(server.streamable_http_app(host=host), store.root)
+        uvicorn.run(app, host=host, port=listen, log_level="warning")
     else:
         import asyncio
+        import sys
 
+        print("abstractify serve: MCP server started (stdio)", file=sys.stderr)
         asyncio.run(server.run_stdio_async())
