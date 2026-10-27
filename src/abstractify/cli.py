@@ -210,8 +210,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
             "ok": True,
             "root": str(root),
             "embed_mode": cfg.embed_mode,
+            "ui_host": cfg.ui_host,
+            "ui_port": cfg.ui_port,
+            "mcp_port": cfg.mcp_port,
             "ui": f"abstractify ui  → http://{cfg.ui_host}:{cfg.ui_port}",
             "serve": "abstractify serve  (MCP stdio)",
+            "serve_http": f"http://{cfg.ui_host}:{cfg.mcp_port}/mcp",
         }
     )
     return 0
@@ -314,9 +318,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
     return 0 if stopping or idle_exit else 1
 
 
-def _probe(port: int, path: str) -> bool:
+def _probe(host: str, port: int, path: str) -> bool:
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
+        conn = http.client.HTTPConnection(host, port, timeout=0.5)
         conn.request("GET", path)
         conn.getresponse()
         conn.close()
@@ -337,8 +341,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         cfg = load_config(_root(str(path)))
     except FileNotFoundError:
         cfg = Config()
-    serve_up = _probe(cfg.mcp_port, "/mcp")
-    ui_up = _probe(cfg.ui_port, "/")
+    host = cfg.ui_host or "127.0.0.1"
+    serve_up = _probe(host, cfg.mcp_port, "/mcp")
+    ui_up = _probe(host, cfg.ui_port, "/")
     if serve_up and ui_up:
         print("abstractify status: connected")
         return 0

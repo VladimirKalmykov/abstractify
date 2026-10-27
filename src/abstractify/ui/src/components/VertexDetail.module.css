@@ -1,0 +1,101 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.back {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.back:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cyan);
+  line-height: 1.25;
+}
+
+.section h3 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d6f7f1;
+  white-space: pre-wrap;
+}
+
+.embedHint {
+  margin: 10px 0 0;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.embedHint code {
+  display: block;
+  margin-top: 4px;
+  padding: 8px;
+  background: #070b12;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 10px;
+  color: #8fdcd3;
+  word-break: break-word;
+}
+
+.muted {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.group {
+  margin-bottom: 10px;
+}
+
+.groupTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cyan);
+  text-transform: capitalize;
+  margin-bottom: 4px;
+}
+
+.list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12px;
+  color: #c8ebe6;
+}
+
+.list li {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(32, 227, 200, 0.08);
+}
+
+.dir {
+  color: var(--cyan);
+  font-family: IBM Plex Mono, ui-monospace, monospace;
+  margin-right: 4px;
+}

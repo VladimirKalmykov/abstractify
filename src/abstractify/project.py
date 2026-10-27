@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from abstractify.config import EMBED_MODES, Config, save_config
+from abstractify.config import EMBED_MODES, Config, allocate_localhost_ports, save_config
 from abstractify.embeddings import build_embedder
 from abstractify.embeddings.local import download_model
 from abstractify.paths import config_path, project_dir
@@ -30,20 +30,25 @@ def init_project(
         raise FileExistsError(
             f"Abstractify already initialized at {project_dir(root)}. Use --force to reconfigure."
         )
+    host = "127.0.0.1"
+    mcp_port, ui_port = allocate_localhost_ports(host)
+    project_dir(root).mkdir(parents=True, exist_ok=True)
     cfg = Config(
         embed_mode=embed_mode,
         embed_url=embed_url,
         custom_adapter=custom_adapter,
+        ui_host=host,
+        mcp_port=mcp_port,
+        ui_port=ui_port,
     )
     if embed_model:
         cfg.embed_model = embed_model
-    project_dir(root).mkdir(parents=True, exist_ok=True)
     save_config(root, cfg)
     store = Store(root, cfg, build_embedder(cfg, root))
     if example:
         store.seed_example()
     store.close()
-    install_skill(root)
+    install_skill(root, cfg)
     if download_model_now:
         if embed_mode != "local":
             raise ValueError("--download-model only applies to --embed-mode local")
@@ -51,7 +56,15 @@ def init_project(
     return cfg
 
 
-def install_skill(root: Path) -> None:
+def _ports_skill_lines(cfg: Config) -> str:
+    host = cfg.ui_host or "127.0.0.1"
+    return (
+        f"- This project's MCP HTTP is at `{host}:{cfg.mcp_port}` (endpoint `/mcp`).\n"
+        f"- This project's UI is at `http://{host}:{cfg.ui_port}`.\n"
+    )
+
+
+def install_skill(root: Path, cfg: Config) -> None:
     from importlib import resources
 
     skill_src = resources.files("abstractify").joinpath("skills/SKILL.md").read_text(encoding="utf-8")
@@ -60,7 +73,8 @@ def install_skill(root: Path) -> None:
     dest.write_text(skill_src, encoding="utf-8")
     always = resources.files("abstractify").joinpath("skills/always-on.md").read_text(encoding="utf-8")
     agents = root / "AGENTS.md"
-    block = f"{SKILL_MARKER_BEGIN}\n{always.rstrip()}\n{SKILL_MARKER_END}\n"
+    body = always.rstrip() + "\n" + _ports_skill_lines(cfg)
+    block = f"{SKILL_MARKER_BEGIN}\n{body}\n{SKILL_MARKER_END}\n"
     if agents.exists():
         text = agents.read_text(encoding="utf-8")
         if SKILL_MARKER_BEGIN in text and SKILL_MARKER_END in text:

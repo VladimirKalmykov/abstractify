@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as d3 from "d3";
+import { graphLayoutKey } from "../graphLayoutKey";
 import type { Entity, GraphDetail } from "../types";
 import styles from "./GraphCanvas.module.css";
 
@@ -12,15 +13,167 @@ type LinkDatum = d3.SimulationLinkDatum<NodeDatum> & {
 
 const CARD_W = 176;
 const CARD_H = 78;
+/** Minimum spacing between node centers (card half-diagonal + gap). */
+const COLLIDE_RADIUS = 150;
+const LINK_DISTANCE = 190;
+const CHARGE_STRENGTH = -1100;
+const DRAG_CLICK_THRESHOLD = 5;
 
-export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
+const STROKE_DEFAULT = "#20e3c8";
+const FILL_DEFAULT = "#0b141c";
+const GLOW_DEFAULT = "drop-shadow(0 0 6px rgba(32,227,200,0.35))";
+
+/** Selected vertex */
+const STROKE_SELECTED = "#f0d048";
+const FILL_SELECTED = "#2a2410";
+const GLOW_SELECTED = "drop-shadow(0 0 10px rgba(240,208,72,0.55))";
+const TITLE_SELECTED = "#fff3c4";
+
+/** Direct neighbors — muted grass green (not UI cyan/teal) */
+const STROKE_NEIGHBOR = "#6f9a52";
+const FILL_NEIGHBOR = "#121a0f";
+const GLOW_NEIGHBOR = "drop-shadow(0 0 8px rgba(111,154,82,0.4))";
+const TITLE_NEIGHBOR = "#c8ddb8";
+
+const STROKE_LINK_DEFAULT = "#1a6b66";
+const FILL_LINK_LABEL_DEFAULT = "#4aa8a0";
+
+type NodeRole = "selected" | "neighbor" | "default";
+
+function neighborIds(selectedId: string | null, links: LinkDatum[]): Set<string> {
+  const ids = new Set<string>();
+  if (!selectedId) return ids;
+  for (const l of links) {
+    if (l.source_id === selectedId) ids.add(l.target_id);
+    if (l.target_id === selectedId) ids.add(l.source_id);
+  }
+  return ids;
+}
+
+function nodeRole(id: string, selectedId: string | null, neighbors: Set<string>): NodeRole {
+  if (!selectedId) return "default";
+  if (id === selectedId) return "selected";
+  if (neighbors.has(id)) return "neighbor";
+  return "default";
+}
+
+type Props = {
+  graph: GraphDetail | null;
+  selectedEntityId: string | null;
+  onSelectEntity: (id: string | null) => void;
+};
+
+function linkEndpointId(endpoint: LinkDatum["source"] | LinkDatum["target"], fallback: string): string {
+  if (typeof endpoint === "object" && endpoint !== null && "id" in endpoint) {
+    return (endpoint as NodeDatum).id;
+  }
+  return fallback;
+}
+
+function linkTouchesSelection(link: LinkDatum, selectedEntityId: string): boolean {
+  const sourceId = linkEndpointId(link.source, link.source_id);
+  const targetId = linkEndpointId(link.target, link.target_id);
+  return sourceId === selectedEntityId || targetId === selectedEntityId;
+}
+
+function applyGraphSelection(
+  node: d3.Selection<SVGGElement, NodeDatum, SVGGElement, unknown>,
+  link: d3.Selection<SVGPathElement, LinkDatum, SVGGElement, unknown>,
+  linkLabel: d3.Selection<SVGTextElement, LinkDatum, SVGGElement, unknown>,
+  links: LinkDatum[],
+  selectedEntityId: string | null,
+) {
+  const neighbors = neighborIds(selectedEntityId, links);
+  node.attr("opacity", (d) => {
+    if (!selectedEntityId) return 1;
+    const role = nodeRole(d.id, selectedEntityId, neighbors);
+    return role === "default" ? 0.42 : 1;
+  });
+  node.each(function (d) {
+    const role = nodeRole(d.id, selectedEntityId, neighbors);
+    const g = d3.select(this);
+    const card = g.select<SVGRectElement>("rect.node-card");
+    const title = g.select<SVGTextElement>("text");
+    if (role === "selected") {
+      card
+        .attr("stroke", STROKE_SELECTED)
+        .attr("fill", FILL_SELECTED)
+        .attr("stroke-width", 2.5)
+        .attr("filter", GLOW_SELECTED);
+      title.attr("fill", TITLE_SELECTED);
+    } else if (role === "neighbor") {
+      card
+        .attr("stroke", STROKE_NEIGHBOR)
+        .attr("fill", FILL_NEIGHBOR)
+        .attr("stroke-width", 2)
+        .attr("filter", GLOW_NEIGHBOR);
+      title.attr("fill", TITLE_NEIGHBOR);
+    } else {
+      card
+        .attr("stroke", STROKE_DEFAULT)
+        .attr("fill", FILL_DEFAULT)
+        .attr("stroke-width", 1.15)
+        .attr("filter", GLOW_DEFAULT);
+      title.attr("fill", "#d6f7f1");
+    }
+    const accent =
+      role === "selected" ? STROKE_SELECTED : role === "neighbor" ? STROKE_NEIGHBOR : STROKE_DEFAULT;
+    g.selectAll("g").selectAll("rect,circle,line,polygon").attr("stroke", accent);
+  });
+
+  link
+    .attr("stroke", (d) =>
+      selectedEntityId && linkTouchesSelection(d, selectedEntityId)
+        ? STROKE_NEIGHBOR
+        : STROKE_LINK_DEFAULT,
+    )
+    .attr("stroke-width", (d) =>
+      selectedEntityId && linkTouchesSelection(d, selectedEntityId) ? 2 : 1.1,
+    )
+    .attr("opacity", (d) => {
+      if (!selectedEntityId) return 0.9;
+      return linkTouchesSelection(d, selectedEntityId) ? 1 : 0.22;
+    });
+
+  linkLabel
+    .attr("fill", (d) =>
+      selectedEntityId && linkTouchesSelection(d, selectedEntityId)
+        ? TITLE_NEIGHBOR
+        : FILL_LINK_LABEL_DEFAULT,
+    )
+    .attr("opacity", (d) => {
+      if (!selectedEntityId) return 1;
+      return linkTouchesSelection(d, selectedEntityId) ? 1 : 0.28;
+    });
+}
+
+export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const onSelectRef = useRef(onSelectEntity);
+  onSelectRef.current = onSelectEntity;
+  const layoutKey = useMemo(() => graphLayoutKey(graph), [graph]);
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+  const nodeLayerRef = useRef<d3.Selection<SVGGElement, NodeDatum, SVGGElement, unknown> | null>(
+    null,
+  );
+  const linksRef = useRef<LinkDatum[]>([]);
+  const linkLayerRef = useRef<d3.Selection<SVGPathElement, LinkDatum, SVGGElement, unknown> | null>(
+    null,
+  );
+  const linkLabelLayerRef = useRef<d3.Selection<
+    SVGTextElement,
+    LinkDatum,
+    SVGGElement,
+    unknown
+  > | null>(null);
 
   useEffect(() => {
+    const graph = graphRef.current;
     const svgEl = svgRef.current;
     const wrap = wrapRef.current;
-    if (!svgEl || !wrap || !graph) return;
+    if (!svgEl || !wrap || !graph || !layoutKey) return;
 
     const svg = d3.select(svgEl);
     svg.selectAll("*").remove();
@@ -36,6 +189,14 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
         root.attr("transform", event.transform.toString());
       });
     svg.call(zoom);
+
+    root
+      .append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("fill", "transparent")
+      .attr("pointer-events", "all")
+      .on("click", () => onSelectRef.current(null));
 
     const nodes: NodeDatum[] = graph.entities.map((e) => ({ ...e }));
     const idSet = new Set(nodes.map((n) => n.id));
@@ -56,11 +217,11 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
         d3
           .forceLink<NodeDatum, LinkDatum>(links)
           .id((d) => d.id)
-          .distance(170),
+          .distance(LINK_DISTANCE),
       )
-      .force("charge", d3.forceManyBody().strength(-420))
+      .force("charge", d3.forceManyBody().strength(CHARGE_STRENGTH))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide(90));
+      .force("collide", d3.forceCollide(COLLIDE_RADIUS));
 
     const link = root
       .append("g")
@@ -99,6 +260,15 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
             if (!event.active) sim.alphaTarget(0.25).restart();
             d.fx = d.x;
             d.fy = d.y;
+            const src = event.sourceEvent as MouseEvent | TouchEvent | undefined;
+            const pt =
+              src && "clientX" in src
+                ? { x: src.clientX, y: src.clientY }
+                : src && "touches" in src && src.touches[0]
+                  ? { x: src.touches[0].clientX, y: src.touches[0].clientY }
+                  : { x: 0, y: 0 };
+            (d as NodeDatum & { _pressX?: number; _pressY?: number })._pressX = pt.x;
+            (d as NodeDatum & { _pressY?: number })._pressY = pt.y;
           })
           .on("drag", (event, d) => {
             d.fx = event.x;
@@ -106,6 +276,20 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
           })
           .on("end", (event, d) => {
             if (!event.active) sim.alphaTarget(0);
+            const src = event.sourceEvent as MouseEvent | TouchEvent | undefined;
+            const pt =
+              src && "clientX" in src
+                ? { x: src.clientX, y: src.clientY }
+                : src && "changedTouches" in src && src.changedTouches[0]
+                  ? { x: src.changedTouches[0].clientX, y: src.changedTouches[0].clientY }
+                  : { x: 0, y: 0 };
+            const pressX = (d as NodeDatum & { _pressX?: number })._pressX ?? pt.x;
+            const pressY = (d as NodeDatum & { _pressY?: number })._pressY ?? pt.y;
+            const moved = Math.hypot(pt.x - pressX, pt.y - pressY);
+            if (moved < DRAG_CLICK_THRESHOLD) {
+              event.sourceEvent?.stopPropagation?.();
+              onSelectRef.current(d.id);
+            }
             d.fx = null;
             d.fy = null;
           }),
@@ -113,6 +297,7 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
 
     node
       .append("rect")
+      .attr("class", "node-card")
       .attr("x", -CARD_W / 2)
       .attr("y", -CARD_H / 2)
       .attr("width", CARD_W)
@@ -138,6 +323,11 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
     drawCount(counts, 0, "link", (d) => d.degree);
     drawCount(counts, 56, "meta", (d) => d.meta_link_count);
 
+    linksRef.current = links;
+    nodeLayerRef.current = node;
+    linkLayerRef.current = link;
+    linkLabelLayerRef.current = linkLabel;
+
     sim.on("tick", () => {
       link.attr("d", (d) => {
         const s = d.source as NodeDatum;
@@ -150,8 +340,30 @@ export function GraphCanvas({ graph }: { graph: GraphDetail | null }) {
 
     return () => {
       sim.stop();
+      nodeLayerRef.current = null;
+      linksRef.current = [];
+      linkLayerRef.current = null;
+      linkLabelLayerRef.current = null;
     };
-  }, [graph]);
+  }, [layoutKey]);
+
+  useEffect(() => {
+    const node = nodeLayerRef.current;
+    const link = linkLayerRef.current;
+    const linkLabel = linkLabelLayerRef.current;
+    if (!node || !link || !linkLabel) return;
+    applyGraphSelection(node, link, linkLabel, linksRef.current, selectedEntityId);
+  }, [selectedEntityId, layoutKey]);
+
+  useEffect(() => {
+    if (layoutKey !== null) return;
+    const svgEl = svgRef.current;
+    if (svgEl) d3.select(svgEl).selectAll("*").remove();
+    nodeLayerRef.current = null;
+    linksRef.current = [];
+    linkLayerRef.current = null;
+    linkLabelLayerRef.current = null;
+  }, [layoutKey]);
 
   return (
     <div className={styles.wrap} ref={wrapRef}>

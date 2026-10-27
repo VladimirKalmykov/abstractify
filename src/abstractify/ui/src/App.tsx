@@ -3,7 +3,9 @@ import { api } from "./api";
 import { EntitiesPanel } from "./components/EntitiesPanel";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { Sidebar } from "./components/Sidebar";
+import { VertexDetail } from "./components/VertexDetail";
 import type { Entity, GraphDetail, GraphKind, GraphSummary } from "./types";
+import { graphDetailEqual } from "./graphLayoutKey";
 import styles from "./App.module.css";
 
 type Tab = "graphs" | "entities";
@@ -14,6 +16,7 @@ export function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [graphs, setGraphs] = useState<GraphSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedVertexId, setSelectedVertexId] = useState<string | null>(null);
   const [detail, setDetail] = useState<GraphDetail | null>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [entityQuery, setEntityQuery] = useState("");
@@ -44,6 +47,19 @@ export function App() {
   }, [loadEntities]);
 
   useEffect(() => {
+    setSelectedVertexId(null);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (tab !== "graphs") setSelectedVertexId(null);
+  }, [tab]);
+
+  const selectedVertex =
+    selectedVertexId && detail
+      ? detail.entities.find((e) => e.id === selectedVertexId) ?? null
+      : null;
+
+  useEffect(() => {
     if (!selectedId) {
       setDetail(null);
       return;
@@ -53,7 +69,12 @@ export function App() {
       .then(setDetail)
       .catch((e) => setError(String(e)));
     const t = setInterval(() => {
-      api.graph(selectedId).then(setDetail).catch(() => undefined);
+      api
+        .graph(selectedId)
+        .then((next) => {
+          setDetail((prev) => (prev && graphDetailEqual(prev, next) ? prev : next));
+        })
+        .catch(() => undefined);
     }, 2500);
     return () => clearInterval(t);
   }, [selectedId]);
@@ -83,15 +104,23 @@ export function App() {
         </div>
         <div className={styles.body}>
           {tab === "graphs" ? (
-            <Sidebar
-              graphs={graphs}
-              selectedId={selectedId}
-              filter={filter}
-              onFilter={setFilter}
-              onSelect={setSelectedId}
-              onCreated={() => loadGraphs()}
-              error={error}
-            />
+            selectedVertex && detail ? (
+              <VertexDetail
+                entity={selectedVertex}
+                graph={detail}
+                onClose={() => setSelectedVertexId(null)}
+              />
+            ) : (
+              <Sidebar
+                graphs={graphs}
+                selectedId={selectedId}
+                filter={filter}
+                onFilter={setFilter}
+                onSelect={setSelectedId}
+                onCreated={() => loadGraphs()}
+                error={error}
+              />
+            )
           ) : (
             <EntitiesPanel
               entities={entities}
@@ -107,8 +136,14 @@ export function App() {
         </div>
       </aside>
       <main className={styles.canvasWrap}>
-        <GraphCanvas graph={detail} />
-        <div className={styles.hint}>scroll to zoom · drag the canvas · drag a card</div>
+        <GraphCanvas
+          graph={detail}
+          selectedEntityId={selectedVertexId}
+          onSelectEntity={setSelectedVertexId}
+        />
+        <div className={styles.hint}>
+          scroll to zoom · drag canvas · drag a card · click a card to inspect
+        </div>
       </main>
     </div>
   );
