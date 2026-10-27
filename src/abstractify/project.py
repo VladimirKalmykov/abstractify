@@ -1,16 +1,39 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from abstractify.config import EMBED_MODES, Config, allocate_localhost_ports, load_config, save_config
 from abstractify.embeddings import build_embedder
+from abstractify.embeddings.errors import BackendUnavailableError
 from abstractify.embeddings.local import download_model
 from abstractify.paths import config_path, project_dir
 from abstractify.store import Store
 
 SKILL_MARKER_BEGIN = "<!-- abstractify:begin -->"
 SKILL_MARKER_END = "<!-- abstractify:end -->"
+LOCAL_MODEL_DOWNLOAD_PROMPT = (
+    "Download the local embedding model to your machine now? "
+    "It can take a while. [y/N] "
+)
+
+
+def fastembed_installed() -> bool:
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def confirm_local_model_download() -> bool:
+    """Yes is y or yes. Every other answer, including an empty one, declines."""
+    try:
+        answer = input(LOCAL_MODEL_DOWNLOAD_PROMPT)
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def init_project(
@@ -61,6 +84,18 @@ def init_project(
         raise FileExistsError(
             f"Abstractify already initialized at {project_dir(root)}. Use --force to reconfigure."
         )
+    if download_model_now and embed_mode != "local":
+        raise ValueError("--download-model only applies to --embed-mode local")
+    if embed_mode == "local" and not fastembed_installed():
+        raise BackendUnavailableError(
+            "FastEmbed is not installed. Use: pip install 'abstractify[local]'"
+        )
+    if embed_mode == "local" and not download_model_now:
+        if not confirm_local_model_download():
+            raise ValueError(
+                "Local embedding model download declined. Init aborted without downloading."
+            )
+        download_model_now = True
     host = "127.0.0.1"
     mcp_port, ui_port = allocate_localhost_ports(host)
     project_dir(root).mkdir(parents=True, exist_ok=True)
@@ -82,8 +117,6 @@ def init_project(
     install_skill(root, cfg)
     install_cursor_mcp(root)
     if download_model_now:
-        if embed_mode != "local":
-            raise ValueError("--download-model only applies to --embed-mode local")
         download_model(root, cfg)
     return cfg
 

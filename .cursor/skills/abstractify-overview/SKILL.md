@@ -65,7 +65,7 @@ AGENTS.md    # блок <!-- abstractify:begin --> … <!-- abstractify:end -->
 | Режим | Что делает |
 |---|---|
 | `none` | Только текст. Векторов нет. |
-| `local` | FastEmbed в процессе. Модель по умолчанию `intfloat/multilingual-e5-large`, 1024 измерения. Нужен `pip install 'abstractify[local]'`. Кэш весов: `.abstractify/models`. |
+| `local` | FastEmbed в процессе. Модель по умолчанию `intfloat/multilingual-e5-large`, 1024 измерения. Нужен `pip install 'abstractify[local]'`. Кэш весов один на машину: `%LOCALAPPDATA%\abstractify\models` (Windows), `~/Library/Caches/abstractify/models` (macOS), `~/.cache/abstractify/models` (Linux). Переопределение: `ABSTRACTIFY_EMBED_MODEL_CACHE`. |
 | `rest` | HTTP `POST {"texts":[...], "input_type": "document"\|"query"}`. URL по умолчанию `http://127.0.0.1:7342/v1/embeddings`. Ключ — переменная `ABSTRACTIFY_EMBED_API_KEY`, не конфиг. |
 | `custom` | Свой Python-файл с `embed(texts)` и необязательным `retrieve`. |
 

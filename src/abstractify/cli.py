@@ -13,6 +13,7 @@ from abstractify import __version__
 from abstractify.config import EMBED_MODES
 from abstractify.gitutil import git_changed_files
 from abstractify.paths import find_project
+from abstractify.embeddings.errors import BackendUnavailableError
 from abstractify.project import init_project
 from abstractify.size import GraphTooLarge
 from abstractify.store import open_store
@@ -31,7 +32,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_init = sub.add_parser("init", help="Install Abstractify into a project")
     p_init.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
-    p_init.add_argument("--embed-mode", choices=EMBED_MODES, default="none")
+    p_init.add_argument(
+        "--embed-mode",
+        choices=EMBED_MODES,
+        default="none",
+        help="local asks before downloading the shared embedding model; "
+        "--download-model skips that prompt",
+    )
     p_init.add_argument("--embed-url", default="", help="REST endpoint for --embed-mode rest")
     p_init.add_argument("--embed-model", default="", help="Local model name override")
     p_init.add_argument("--custom-adapter", default="", help="Python file for --embed-mode custom")
@@ -40,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument(
         "--download-model",
         action="store_true",
-        help="For local mode, download the ~2GB model now",
+        help="With --embed-mode local, download the shared model without asking",
     )
     p_init.add_argument(
         "--only-agents",
@@ -240,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     except GraphTooLarge as exc:
         _print(exc.as_dict())
         return 2
-    except (FileNotFoundError, FileExistsError, KeyError, ValueError) as exc:
+    except (FileNotFoundError, FileExistsError, KeyError, ValueError, BackendUnavailableError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

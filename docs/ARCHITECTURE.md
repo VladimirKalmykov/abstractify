@@ -96,7 +96,7 @@ Size guard (`size.py`): refuse above `max_entities_per_graph` (80) or `max_edges
 | Mode | Class | Notes |
 |---|---|---|
 | `none` | `NoneEmbedder` | substring + IDF; no vectors |
-| `local` | `LocalEmbedder` | FastEmbed (LocalEmbeddingService-style), default `intfloat/multilingual-e5-large`, cache `.abstractify/models`; `pip install 'abstractify[local]'`; `--download-model` |
+| `local` | `LocalEmbedder` | FastEmbed (LocalEmbeddingService-style), default `intfloat/multilingual-e5-large`, shared cache `%LOCALAPPDATA%/abstractify/models` (Windows), `~/Library/Caches/abstractify/models` (macOS), or `~/.cache/abstractify/models` (Linux); override `ABSTRACTIFY_EMBED_MODEL_CACHE`; `pip install 'abstractify[local]'`; `--download-model` |
 | `rest` | `RestEmbedder` | `POST {"texts":[...], "input_type": "document"|"query"}`; compatible with LocalEmbeddingService (`vectors` in response). Default URL `http://127.0.0.1:7342/v1/embeddings`. API key from `ABSTRACTIFY_EMBED_API_KEY` if needed. |
 | `custom` | `CustomEmbedder` | user Python file with `embed(texts)` and optional `retrieve` — see `embeddings/adapter_example.py` |
 

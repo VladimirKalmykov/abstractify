@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-from abstractify.paths import project_dir
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from abstractify.config import Config
+
+
+def default_model_cache() -> Path:
+    """One FastEmbed weight cache for every project on this machine."""
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+        base = Path(xdg) if xdg else Path.home() / ".cache"
+    return base / "abstractify" / "models"
+
 
 @dataclass(frozen=True)
 class LocalEmbeddingSettings:
@@ -29,7 +42,7 @@ class LocalEmbeddingSettings:
         )
 
         cache_env = os.environ.get("ABSTRACTIFY_EMBED_MODEL_CACHE", "").strip()
-        cache = Path(cache_env) if cache_env else project_dir(root) / "models"
+        cache = Path(cache_env) if cache_env else default_model_cache()
         batch_env = os.environ.get("ABSTRACTIFY_EMBED_BATCH_SIZE", "").strip()
         batch_size = int(batch_env) if batch_env else getattr(
             cfg, "embed_batch_size", DEFAULT_EMBED_BATCH_SIZE

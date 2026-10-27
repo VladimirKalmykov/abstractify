@@ -166,6 +166,6 @@ You can turn on vector search **without re-running `abstractify init`**. Graphs 
 
 3. Restart anything that talks to the store (`abstractify serve`, `abstractify ui`, or `abstractify start`). On open, abstractify **backfills** missing vectors for entities that were created while `embed_mode` was `none`.
 
-Model weights are cached under **`.abstractify/models`** (override with `ABSTRACTIFY_EMBED_MODEL_CACHE`). Default model: **`intfloat/multilingual-e5-large`**, **1024** dimensions. First embed may download weights; use `abstractify init --download-model` on a fresh project, or let the first backfill load the model.
+Model weights are cached once per machine under the user cache directory (`%LOCALAPPDATA%\abstractify\models` on Windows, `~/Library/Caches/abstractify/models` on macOS, `$XDG_CACHE_HOME/abstractify/models` or `~/.cache/abstractify/models` on Linux). Override with `ABSTRACTIFY_EMBED_MODEL_CACHE`. Default model: **`intfloat/multilingual-e5-large`**, **1024** dimensions. The local loader checks that shared cache first and downloads the model there only when it is missing. `abstractify init --embed-mode local` asks before that download and aborts init on any answer other than yes. `abstractify init --embed-mode local --download-model` downloads without asking. FastEmbed prints its own progress while the weights are fetched.
 
 To use a local HTTP embedding service (e.g. on port **7342**) instead of in-process FastEmbed, set `embed_mode = "rest"` and `embed_url = "http://127.0.0.1:7342/v1/embeddings"`, then restart the same way.

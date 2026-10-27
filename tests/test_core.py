@@ -33,6 +33,55 @@ def _init(tmp: Path, **kwargs) -> Path:
     return tmp
 
 
+def test_init_local_without_fastembed_exits_before_creating_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("abstractify.project.fastembed_installed", lambda: False)
+
+    def _unexpected(_prompt: str) -> str:
+        raise AssertionError("prompt should not run without FastEmbed")
+
+    monkeypatch.setattr("builtins.input", _unexpected)
+    code = main(["init", "--embed-mode", "local", str(tmp_path)])
+    assert code == 1
+    assert "pip install 'abstractify[local]'" in capsys.readouterr().err
+    assert not (tmp_path / ".abstractify").exists()
+
+
+def test_init_local_decline_aborts_without_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("abstractify.project.fastembed_installed", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+    with pytest.raises(ValueError, match="declined"):
+        init_project(tmp_path, embed_mode="local")
+    assert not (tmp_path / ".abstractify").exists()
+
+
+def test_init_local_yes_downloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("abstractify.project.fastembed_installed", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    called: list[str] = []
+    monkeypatch.setattr(
+        "abstractify.project.download_model",
+        lambda _root, cfg: called.append(cfg.embed_mode),
+    )
+    init_project(tmp_path, embed_mode="local")
+    assert called == ["local"]
+    assert (tmp_path / ".abstractify" / "config.toml").is_file()
+
+
+def test_init_download_model_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("abstractify.project.fastembed_installed", lambda: True)
+
+    def _unexpected(_prompt: str) -> str:
+        raise AssertionError("prompt should be skipped")
+
+    monkeypatch.setattr("builtins.input", _unexpected)
+    called: list[bool] = []
+    monkeypatch.setattr("abstractify.project.download_model", lambda _root, _cfg: called.append(True))
+    init_project(tmp_path, embed_mode="local", download_model_now=True)
+    assert called == [True]
+
+
 def test_init_creates_sqlite_and_skill(tmp_path: Path) -> None:
     _init(tmp_path)
     assert (tmp_path / ".abstractify" / "config.toml").is_file()
@@ -493,6 +542,73 @@ def test_configure_embeddings_rest_without_init(tmp_path: Path) -> None:
     assert cfg.embed_mode == "rest"
     assert cfg.embed_url == DEFAULT_LES_EMBED_URL
     assert cfg.embed_dimensions == 1024
+
+
+def test_local_model_cache_is_shared_across_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractify.config import Config
+    from abstractify.embeddings.local_settings import LocalEmbeddingSettings, default_model_cache
+
+    monkeypatch.delenv("ABSTRACTIFY_EMBED_MODEL_CACHE", raising=False)
+    cfg = Config()
+    first = LocalEmbeddingSettings.from_config(tmp_path / "one", cfg)
+    second = LocalEmbeddingSettings.from_config(tmp_path / "two", cfg)
+    assert first.model_cache == second.model_cache == default_model_cache()
+    assert ".abstractify" not in first.model_cache.parts
+
+
+def test_local_model_cache_honors_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractify.config import Config
+    from abstractify.embeddings.local_settings import LocalEmbeddingSettings
+
+    override = tmp_path / "shared-models"
+    monkeypatch.setenv("ABSTRACTIFY_EMBED_MODEL_CACHE", str(override))
+    settings = LocalEmbeddingSettings.from_config(tmp_path / "project", Config())
+    assert settings.model_cache == override
+
+
+def test_ensure_model_cached_skips_download_when_present(tmp_path: Path) -> None:
+    from abstractify.embeddings.backend import ensure_model_cached
+
+    class _Model:
+        model = "intfloat/multilingual-e5-large"
+
+    calls: list[bool] = []
+
+    def download(_model, cache: str, local_files_only: bool = False) -> str:
+        calls.append(local_files_only)
+        return cache
+
+    ensure_model_cached(
+        "intfloat/multilingual-e5-large",
+        tmp_path / "models",
+        models=[_Model()],
+        download=download,
+    )
+    assert calls == [True]
+    assert (tmp_path / "models").is_dir()
+
+
+def test_ensure_model_cached_downloads_once_when_missing(tmp_path: Path) -> None:
+    from abstractify.embeddings.backend import ensure_model_cached
+
+    class _Model:
+        model = "intfloat/multilingual-e5-large"
+
+    calls: list[bool] = []
+    present = False
+
+    def download(_model, cache: str, local_files_only: bool = False) -> str:
+        nonlocal present
+        calls.append(local_files_only)
+        if local_files_only and not present:
+            raise ValueError("not in cache")
+        present = True
+        return cache
+
+    cache = tmp_path / "models"
+    ensure_model_cached("Intfloat/multilingual-e5-large", cache, models=[_Model()], download=download)
+    ensure_model_cached("intfloat/multilingual-e5-large", cache, models=[_Model()], download=download)
+    assert calls == [True, False, True]
 
 
 def test_local_embedding_service_uses_input_prefixes() -> None:
