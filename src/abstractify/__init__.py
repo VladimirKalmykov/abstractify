@@ -1,6 +1,6 @@
 """Abstractify: agent-written abstraction graphs over a project."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from abstractify.paths import find_project, project_dir
 from abstractify.store import Store

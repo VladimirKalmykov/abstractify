@@ -1,0 +1,12 @@
+#!/bin/sh
+# Bump the patch version as part of this commit. Installed copy: .git/hooks/pre-commit
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+if command -v python >/dev/null 2>&1; then
+  exec python scripts/bump_patch_version.py --git
+fi
+if command -v py >/dev/null 2>&1; then
+  exec py -3 scripts/bump_patch_version.py --git
+fi
+echo "abstractify: python not found, cannot bump the package version" >&2
+exit 1

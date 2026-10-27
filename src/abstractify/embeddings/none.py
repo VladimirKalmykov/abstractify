@@ -18,7 +18,8 @@ class NoneEmbedder(Embedder):
 
     name = "none"
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
+        del input_type
         return [[] for _ in texts]
 
 

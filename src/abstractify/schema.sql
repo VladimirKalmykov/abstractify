@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS entities (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  metadata JSON NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS code_refs (
   id TEXT PRIMARY KEY,
   entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
   path TEXT NOT NULL,
+  -- NULL/NULL: the whole module. start_line only: one line. both: a line range.
   start_line INTEGER,
   end_line INTEGER,
   note TEXT NOT NULL DEFAULT ''

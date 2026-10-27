@@ -9,7 +9,7 @@ class Embedder(ABC):
     name: str = "base"
 
     @abstractmethod
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
         raise NotImplementedError
 
     def retrieve(self, query: str, items: list[dict], k: int = 10) -> list[dict] | None:

@@ -5,6 +5,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from abstractify import __version__
 from abstractify.size import GraphTooLarge
 from abstractify.store import Store, open_store
 
@@ -30,7 +31,7 @@ def _err(exc: Exception) -> dict:
 def build_server(store: Store) -> MCPServer:
     server = MCPServer(
         name="abstractify",
-        version="0.1.0",
+        version=__version__,
         instructions=INSTRUCTIONS,
     )
 
@@ -53,7 +54,10 @@ def build_server(store: Store) -> MCPServer:
 
     @server.tool(
         description="Create a graph. principle is the user-defined abstraction principle (required). "
-        "kind is structural or flow. Optional entities/edges. Size guard: confirm_large."
+        "kind is structural or flow. Optional entities/edges. Entity code_refs: "
+        "{path, start_line?, end_line?, note?}. Omit both lines for the whole module; "
+        "start_line alone is one line; both are a range. end_line requires start_line "
+        "and cannot be less than it. Size guard: confirm_large."
     )
     def create_graph(
         name: str,
@@ -81,7 +85,9 @@ def build_server(store: Store) -> MCPServer:
 
     @server.tool(
         description="Update graph metadata and/or replace entities/edges (whole-graph update). "
-        "Prefer targeted entity/edge tools for small edits."
+        "Prefer targeted entity/edge tools for small edits. Entity code_refs accept "
+        "start_line and end_line: omit both for the whole module, start_line alone for "
+        "one line, both for a range. end_line requires start_line and cannot be less than it."
     )
     def update_graph(
         graph_id: str,
@@ -135,7 +141,11 @@ def build_server(store: Store) -> MCPServer:
 
     @server.tool(
         description="Create or update a specific entity (targeted edit). "
-        "code_refs: [{path, start_line?, end_line?, note?}]. Optional graph_id membership."
+        "code_refs: [{path, start_line?, end_line?, note?}]. Omit both lines for the whole "
+        "module (NULL/NULL); start_line alone is one line; start_line and end_line are a "
+        "range. end_line requires start_line and cannot be less than it. "
+        "metadata is any JSON value stored on the entity; the shape is not fixed. "
+        "Optional graph_id membership."
     )
     def upsert_entity(
         name: str,
@@ -143,6 +153,7 @@ def build_server(store: Store) -> MCPServer:
         entity_id: str | None = None,
         graph_id: str | None = None,
         code_refs: list[dict] | None = None,
+        metadata: dict | list | str | int | float | bool | None = None,
         confirm_large: bool = False,
     ) -> dict:
         spec: dict = {"name": name, "description": description}
@@ -150,6 +161,8 @@ def build_server(store: Store) -> MCPServer:
             spec["id"] = entity_id
         if code_refs is not None:
             spec["code_refs"] = code_refs
+        if metadata is not None:
+            spec["metadata"] = metadata
         try:
             return _ok(store.upsert_entity(spec, graph_id=graph_id, confirm_large=confirm_large))
         except Exception as exc:

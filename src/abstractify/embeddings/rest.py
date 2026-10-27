@@ -18,15 +18,23 @@ class RestEmbedder(Embedder):
         self.url = url
         self.api_key = api_key
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        payload = json.dumps({"texts": texts, "input": texts}).encode("utf-8")
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
+        payload = json.dumps(
+            {"texts": texts, "input": texts, "input_type": input_type},
+        ).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         req = urllib.request.Request(self.url, data=payload, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read().decode("utf-8")
+                body = json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"REST embedder HTTP {exc.code}: {detail[:500]}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"REST embedder failed: {exc}") from exc
         return _parse_embeddings(body, expected=len(texts))
@@ -34,7 +42,14 @@ class RestEmbedder(Embedder):
 
 def _parse_embeddings(body: object, expected: int) -> list[list[float]]:
     if isinstance(body, dict):
-        if "embeddings" in body and isinstance(body["embeddings"], list):
+        if "error" in body and isinstance(body["error"], dict):
+            err = body["error"]
+            code = err.get("code", "ERROR")
+            message = err.get("message", str(err))
+            raise RuntimeError(f"REST embedder: {code}: {message}")
+        if "vectors" in body and isinstance(body["vectors"], list):
+            vecs = body["vectors"]
+        elif "embeddings" in body and isinstance(body["embeddings"], list):
             vecs = body["embeddings"]
         elif "data" in body and isinstance(body["data"], list):
             vecs = [row["embedding"] for row in body["data"]]

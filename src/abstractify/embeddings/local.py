@@ -1,40 +1,48 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from abstractify.config import Config
 from abstractify.embeddings.base import Embedder
+from abstractify.embeddings.local_service import LocalEmbeddingService
+from abstractify.embeddings.local_settings import LocalEmbeddingSettings
 
 
 class LocalEmbedder(Embedder):
-    """sentence-transformers local model (~2 GB including cache). Lazy-loaded."""
+    """FastEmbed local vectors via LocalEmbeddingService-style pipeline."""
 
     name = "local"
 
-    def __init__(self, model_name: str) -> None:
-        self.model_name = model_name
-        self._model = None
+    def __init__(
+        self,
+        settings: LocalEmbeddingSettings,
+        service: LocalEmbeddingService | None = None,
+    ) -> None:
+        self.settings = settings
+        self._service = service or LocalEmbeddingService(settings)
+        self.name = f"fastembed:{settings.model_id}"
 
     def available(self) -> bool:
         try:
-            import sentence_transformers  # noqa: F401
+            import fastembed  # noqa: F401
         except ImportError:
             return False
         return True
 
-    def _load(self):
-        if self._model is not None:
-            return
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            raise RuntimeError(
-                "Local embeddings require: pip install 'abstractify[local]'"
-            ) from exc
-        self._model = SentenceTransformer(self.model_name)
+    @property
+    def loaded(self) -> bool:
+        return self._service.model_loaded
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        self._load()
-        vectors = self._model.encode(texts, normalize_embeddings=True)
-        return [v.tolist() for v in vectors]
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
+        return self._service.embed_texts(texts, input_type=input_type)
 
 
-def download_model(model_name: str) -> None:
-    LocalEmbedder(model_name)._load()
+def build_local_embedder(root: Path, cfg: Config) -> LocalEmbedder:
+    settings = LocalEmbeddingSettings.from_config(root, cfg)
+    return LocalEmbedder(settings)
+
+
+def download_model(root: Path, cfg: Config) -> None:
+    """Pre-load model weights (same as first embed / init --download-model)."""
+    embedder = build_local_embedder(root, cfg)
+    embedder.embed(["abstractify warmup"], input_type="document")

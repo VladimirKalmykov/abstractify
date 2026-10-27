@@ -99,3 +99,55 @@
   font-family: IBM Plex Mono, ui-monospace, monospace;
   margin-right: 4px;
 }
+
+.fileRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pathTip {
+  position: fixed;
+  z-index: 20;
+  transform: translateY(-50%);
+  max-width: 360px;
+  padding: 8px;
+  background: #070b12;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 0 12px var(--cyan-glow);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8fdcd3;
+  white-space: normal;
+  word-break: break-word;
+  pointer-events: none;
+}
+
+.fileName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.copy {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cyan);
+  cursor: pointer;
+  display: block;
+}
+
+.copy svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}

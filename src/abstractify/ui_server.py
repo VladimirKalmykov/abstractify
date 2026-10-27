@@ -63,12 +63,15 @@ def build_app(store: Store) -> Starlette:
     async def api_create_entity(request: Request) -> JSONResponse:
         body = await request.json()
         try:
+            spec: dict = {
+                "name": body["name"],
+                "description": body.get("description", ""),
+                "code_refs": body.get("code_refs") or [],
+            }
+            if "metadata" in body:
+                spec["metadata"] = body["metadata"]
             ent = store.upsert_entity(
-                {
-                    "name": body["name"],
-                    "description": body.get("description", ""),
-                    "code_refs": body.get("code_refs") or [],
-                },
+                spec,
                 graph_id=body.get("graph_id"),
             )
             return JSONResponse(ent, status_code=201)

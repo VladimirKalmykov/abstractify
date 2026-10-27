@@ -224,7 +224,7 @@ Settled while building the first prototype. Earlier sections stay as the discuss
 - **Snapshots:** SQLite `snapshots` rows (JSON payload of one graph) plus `.abstractify/snapshots/<id>.json`.
 - **Post-edit command:** `abstractify affected [--git] [FILE ...]`. Same behavior as MCP `affected_by_files`.
 - **Skill install:** `init` writes `.cursor/skills/abstractify/SKILL.md` and a marked block in `AGENTS.md` (created if missing).
-- **Local embedding model:** `BAAI/bge-large-en-v1.5` (~1.3 GB weights; ~2 GB with tokenizer/cache). Downloaded on first embed or `init --download-model`. Not downloaded during ordinary tests.
+- **Local embedding model:** FastEmbed, default `intfloat/multilingual-e5-large` (1024-d). Weights cached under `.abstractify/models` (override with `ABSTRACTIFY_EMBED_MODEL_CACHE`). Lazy-loaded on first embed or `init --download-model`. Uses `query:` / `passage:` prefixes like LocalEmbeddingService. Not downloaded during ordinary tests.
 - **Custom adapter:** a Python file with `embed(texts: list[str]) -> list[list[float]]` and optional `retrieve(query, items, k)`.
 - **REST embedder:** `POST` JSON `{"texts": [...]}` to the configured URL; accepts `{"embeddings": [[...]]}` or OpenAI-style `{"data": [{"embedding": [...]}]}`. API key from `ABSTRACTIFY_EMBED_API_KEY` (not argv).
 - **UI writes:** Entities tab can create entities; Graphs tab can create a graph (name, kind, principle). Agent MCP remains the primary mutation path.

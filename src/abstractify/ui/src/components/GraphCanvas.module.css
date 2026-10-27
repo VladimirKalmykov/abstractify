@@ -45,3 +45,31 @@
   font-size: 10px;
   margin-right: 8px;
 }
+
+.motion {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 2;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0b111a;
+}
+
+.motion button {
+  background: transparent;
+  border: 0;
+  padding: 6px 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.motion button.motionOn {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}

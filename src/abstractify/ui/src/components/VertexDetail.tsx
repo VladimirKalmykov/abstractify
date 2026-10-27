@@ -1,4 +1,5 @@
-import type { Entity, GraphDetail } from "../types";
+import { useState } from "react";
+import type { CodeRef, Entity, GraphDetail } from "../types";
 import styles from "./VertexDetail.module.css";
 
 type Props = {
@@ -15,6 +16,33 @@ type RelationGroup = {
 
 function labelRelation(relation: string): string {
   return relation.replaceAll("_", " ");
+}
+
+function fileName(path: string): string {
+  const norm = path.replaceAll("\\", "/");
+  const name = norm.slice(norm.lastIndexOf("/") + 1);
+  return name || norm;
+}
+
+function projectRelativePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
 }
 
 function buildGraphRelationGroups(entityId: string, graph: GraphDetail): RelationGroup[] {
@@ -57,6 +85,70 @@ function buildMetaGroups(entity: Entity, graph: GraphDetail): Map<string, string
   return map;
 }
 
+function FileEntry({ pathRef }: { pathRef: CodeRef }) {
+  const relative = projectRelativePath(pathRef.path);
+  const tipId = `file-path-${pathRef.id}`;
+  const [tip, setTip] = useState<{ top: number; left: number } | null>(null);
+
+  function place(target: HTMLElement) {
+    const box = target.getBoundingClientRect();
+    setTip({ top: box.top + box.height / 2, left: box.right + 10 });
+  }
+
+  return (
+    <li
+      className={styles.fileRow}
+      onMouseEnter={(event) => place(event.currentTarget)}
+      onMouseLeave={() => setTip(null)}
+      onFocus={(event) => place(event.currentTarget)}
+      onBlur={() => setTip(null)}
+    >
+      <span className={styles.fileName} aria-describedby={tipId}>
+        {fileName(relative)}
+      </span>
+      {tip ? (
+        <span
+          id={tipId}
+          className={styles.pathTip}
+          role="tooltip"
+          style={{ top: tip.top, left: tip.left }}
+        >
+          {relative}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        className={styles.copy}
+        aria-label={`Copy ${relative}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void copyText(relative);
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect
+            x="5.2"
+            y="5.2"
+            width="7.2"
+            height="7.2"
+            rx="1"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+          />
+          <path
+            d="M3.6 10.2V3.8c0-.3.2-.6.6-.6h6.4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+          />
+        </svg>
+      </button>
+    </li>
+  );
+}
+
 export function VertexDetail({ entity, graph, onClose }: Props) {
   const relationGroups = buildGraphRelationGroups(entity.id, graph);
   const metaGroups = buildMetaGroups(entity, graph);
@@ -76,6 +168,18 @@ export function VertexDetail({ entity, graph, onClose }: Props) {
         <p className={styles.embedHint}>
           Embedded as: <code>{embedText || entity.name}</code>
         </p>
+      </section>
+      <section className={styles.section}>
+        <h3>Files</h3>
+        {entity.code_refs.length === 0 ? (
+          <p className={styles.muted}>No files</p>
+        ) : (
+          <ul className={styles.list}>
+            {entity.code_refs.map((ref) => (
+              <FileEntry key={ref.id} pathRef={ref} />
+            ))}
+          </ul>
+        )}
       </section>
       <section className={styles.section}>
         <h3>Dependencies in this graph</h3>

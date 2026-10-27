@@ -13,7 +13,9 @@ EMBED_MODES = ("local", "rest", "none", "custom")
 KNOWN_RELATIONS = ("knows_about", "does_not_know_about", "calls", "responds_to")
 GRAPH_KINDS = ("structural", "flow")
 
-DEFAULT_LOCAL_MODEL = "BAAI/bge-large-en-v1.5"
+DEFAULT_LOCAL_MODEL = "intfloat/multilingual-e5-large"
+DEFAULT_EMBED_DIMENSIONS = 1024
+DEFAULT_EMBED_BATCH_SIZE = 16
 
 
 @dataclass
@@ -21,6 +23,8 @@ class Config:
     embed_mode: str = "none"
     embed_url: str = ""
     embed_model: str = DEFAULT_LOCAL_MODEL
+    embed_dimensions: int = DEFAULT_EMBED_DIMENSIONS
+    embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
     custom_adapter: str = ""
     max_entities_per_graph: int = 80
     max_edges_per_graph: int = 200
@@ -91,6 +95,8 @@ def _toml_dumps(cfg: Config) -> str:
         f'embed_mode = "{_toml_escape(data["embed_mode"])}"',
         f'embed_url = "{_toml_escape(data["embed_url"])}"',
         f'embed_model = "{_toml_escape(data["embed_model"])}"',
+        f"embed_dimensions = {data['embed_dimensions']}",
+        f"embed_batch_size = {data['embed_batch_size']}",
         f'custom_adapter = "{_toml_escape(data["custom_adapter"])}"',
         f'max_entities_per_graph = {data["max_entities_per_graph"]}',
         f'max_edges_per_graph = {data["max_edges_per_graph"]}',

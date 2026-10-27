@@ -29,7 +29,8 @@ class CustomEmbedder(Embedder):
         self._mod = mod
         self.path = path
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
+        del input_type
         vecs = self._mod.embed(texts)
         return [[float(x) for x in v] for v in vecs]
 

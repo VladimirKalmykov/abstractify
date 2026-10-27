@@ -26,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"abstractify {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    p_version = sub.add_parser("version", aliases=["v"], help="Print the package version")
+    p_version.set_defaults(func=_cmd_version)
+
     p_init = sub.add_parser("init", help="Install Abstractify into a project")
     p_init.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_init.add_argument("--embed-mode", choices=EMBED_MODES, default="none")
@@ -38,6 +41,24 @@ def main(argv: list[str] | None = None) -> int:
         "--download-model",
         action="store_true",
         help="For local mode, download the ~2GB model now",
+    )
+    p_init.add_argument(
+        "--only-agents",
+        action="store_true",
+        help="Update only the AGENTS.md Abstractify block on an already initialized project",
+    )
+    p_init.add_argument(
+        "--only-skill",
+        action="store_true",
+        help="Install Abstractify skills into an already initialized project. "
+        "Does not change config, the database, or AGENTS.md",
+    )
+    p_init.add_argument(
+        "--only-mcp",
+        action="store_true",
+        help="Write only the Abstractify MCP server entry in .cursor/mcp.json "
+        "on an already initialized project. "
+        "Does not change config, the database, skills, or AGENTS.md",
     )
     p_init.set_defaults(func=_cmd_init)
 
@@ -77,6 +98,40 @@ def main(argv: list[str] | None = None) -> int:
     p_status = sub.add_parser("status", help="Check whether serve and UI are up")
     p_status.add_argument("path", nargs="?", default=".")
     p_status.set_defaults(func=_cmd_status)
+
+    p_emb = sub.add_parser(
+        "embeddings",
+        help="Enable or backfill embeddings on an existing project (no re-init)",
+    )
+    emb_sub = p_emb.add_subparsers(dest="emb_cmd", required=True)
+    emb_en = emb_sub.add_parser(
+        "enable",
+        help="Set embed_mode in config.toml (local FastEmbed or REST → LocalEmbeddingService)",
+    )
+    emb_en.add_argument("path", nargs="?", default=".")
+    emb_en.add_argument(
+        "--mode",
+        choices=("local", "rest"),
+        required=True,
+        help="local = in-process FastEmbed; rest = HTTP service (e.g. port 7342)",
+    )
+    emb_en.add_argument(
+        "--url",
+        default="",
+        help="REST URL (default: http://127.0.0.1:7342/v1/embeddings for LocalEmbeddingService)",
+    )
+    emb_en.add_argument(
+        "--no-backfill",
+        action="store_true",
+        help="Only update config; do not embed existing entities now",
+    )
+    emb_en.set_defaults(func=_cmd_embeddings_enable)
+    emb_bf = emb_sub.add_parser(
+        "backfill",
+        help="Embed entities missing vectors (after config already has embed_mode set)",
+    )
+    emb_bf.add_argument("path", nargs="?", default=".")
+    emb_bf.set_defaults(func=_cmd_embeddings_backfill)
 
     p_aff = sub.add_parser(
         "affected",
@@ -152,7 +207,18 @@ def main(argv: list[str] | None = None) -> int:
     e_up.add_argument("--description", default="")
     e_up.add_argument("--graph")
     e_up.add_argument("--id")
-    e_up.add_argument("--code-ref", action="append", default=[], help="path[:start[:end]]")
+    e_up.add_argument(
+        "--code-ref",
+        action="append",
+        default=[],
+        help="path (whole module), path:start (one line), or path:start:end (range). "
+        "end requires start and cannot be less than start",
+    )
+    e_up.add_argument(
+        "--metadata",
+        default=None,
+        help="JSON value stored on the entity. The shape is not fixed",
+    )
     e_up.add_argument("--path", default=".")
     e_up.set_defaults(func=_cmd_entity_upsert)
 
@@ -180,7 +246,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print(obj: object) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+    text = json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="backslashreplace").decode("ascii"))
 
 
 def _root(path: str) -> Path:
@@ -191,6 +261,11 @@ def _root(path: str) -> Path:
         if (p / ".abstractify" / "config.toml").is_file():
             return p
         raise
+
+
+def _cmd_version(_args: argparse.Namespace) -> int:
+    print(__version__)
+    return 0
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -204,20 +279,33 @@ def _cmd_init(args: argparse.Namespace) -> int:
         force=args.force,
         example=args.example,
         download_model_now=args.download_model,
+        only_agents=args.only_agents,
+        only_skill=args.only_skill,
+        only_mcp=args.only_mcp,
     )
-    _print(
-        {
-            "ok": True,
-            "root": str(root),
-            "embed_mode": cfg.embed_mode,
-            "ui_host": cfg.ui_host,
-            "ui_port": cfg.ui_port,
-            "mcp_port": cfg.mcp_port,
-            "ui": f"abstractify ui  → http://{cfg.ui_host}:{cfg.ui_port}",
-            "serve": "abstractify serve  (MCP stdio)",
-            "serve_http": f"http://{cfg.ui_host}:{cfg.mcp_port}/mcp",
-        }
-    )
+    payload = {
+        "ok": True,
+        "root": str(root),
+        "embed_mode": cfg.embed_mode,
+        "ui_host": cfg.ui_host,
+        "ui_port": cfg.ui_port,
+        "mcp_port": cfg.mcp_port,
+        "ui": f"abstractify ui  → http://{cfg.ui_host}:{cfg.ui_port}",
+        "serve": "abstractify serve  (MCP stdio)",
+        "serve_http": f"http://{cfg.ui_host}:{cfg.mcp_port}/mcp",
+    }
+    if args.only_skill:
+        skills = [
+            root / ".agents" / "skills" / "abstractify" / "SKILL.md",
+            root / ".cursor" / "skills" / "abstractify" / "SKILL.md",
+        ]
+        parser_skill = root / ".parser" / "skills" / "abstractify" / "SKILL.md"
+        if (root / "parsers").is_dir() and parser_skill.is_file():
+            skills.append(parser_skill)
+        payload["skills"] = [str(path) for path in skills]
+    if not args.only_skill and not args.only_agents:
+        payload["mcp"] = str(root / ".cursor" / "mcp.json")
+    _print(payload)
     return 0
 
 
@@ -331,6 +419,46 @@ def _probe(host: str, port: int, path: str) -> bool:
         return True
     except OSError:
         return False
+
+
+def _cmd_embeddings_enable(args: argparse.Namespace) -> int:
+    from abstractify.embeddings.setup import configure_embeddings
+
+    root = Path(args.path).resolve()
+    try:
+        cfg = configure_embeddings(
+            root,
+            mode=args.mode,
+            embed_url=args.url or None,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    result: dict = {
+        "ok": True,
+        "embed_mode": cfg.embed_mode,
+        "embed_url": cfg.embed_url,
+        "embed_model": cfg.embed_model,
+        "embed_dimensions": cfg.embed_dimensions,
+    }
+    if not args.no_backfill:
+        store = open_store(root)
+        try:
+            result["backfill"] = store._last_backfill_report
+        finally:
+            store.close()
+    _print(result)
+    return 0
+
+
+def _cmd_embeddings_backfill(args: argparse.Namespace) -> int:
+    root = Path(args.path).resolve()
+    store = open_store(root, backfill_embeddings=False)
+    try:
+        _print(store.backfill_missing_embeddings())
+    finally:
+        store.close()
+    return 0
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -495,6 +623,8 @@ def _cmd_entity_upsert(args: argparse.Namespace) -> int:
         "description": args.description,
         "code_refs": [_parse_code_ref(s) for s in args.code_ref],
     }
+    if args.metadata is not None:
+        spec["metadata"] = args.metadata
     if not spec["id"]:
         spec.pop("id")
     store = open_store(_root(args.path))

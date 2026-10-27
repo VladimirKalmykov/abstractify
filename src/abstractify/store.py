@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 from importlib import resources
 from pathlib import Path
 
@@ -38,6 +40,60 @@ def _row(r: sqlite3.Row | None) -> dict | None:
 
 def _norm_path(path: str) -> str:
     return path.replace("\\", "/").lstrip("./")
+
+
+def _dump_entity_metadata(value: Any) -> str:
+    """Store any JSON value. The shape is not fixed."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("entity metadata must be valid JSON") from exc
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError as exc:
+        raise ValueError("entity metadata must be JSON-serializable") from exc
+
+
+def _load_entity_metadata(raw: Any) -> Any:
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    return raw
+
+
+def _optional_line(ref: dict, key: str) -> int | None:
+    if key not in ref or ref[key] is None or ref[key] == "":
+        return None
+    value = ref[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"code_ref.{key} must be an integer")
+    return value
+
+
+def _normalize_code_ref(ref: dict) -> dict:
+    """Whole module is NULL/NULL; start_line alone is one line; both are a range."""
+    if not isinstance(ref, dict):
+        raise ValueError("code_ref must be an object")
+    path = _norm_path(ref.get("path") or "")
+    if not path:
+        raise ValueError("code_ref.path is required")
+    start = _optional_line(ref, "start_line")
+    end = _optional_line(ref, "end_line")
+    if end is not None and start is None:
+        raise ValueError("code_ref.start_line is required when end_line is set")
+    if start is not None and end is not None and end < start:
+        raise ValueError("code_ref.end_line cannot be less than start_line")
+    return {
+        "path": path,
+        "start_line": start,
+        "end_line": end,
+        "note": ref.get("note") or "",
+    }
 
 
 def _ranges_overlap(
@@ -88,7 +144,109 @@ class Store:
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', '1')"
             )
+            self._migrate_schema()
             self._conn.commit()
+
+    def _migrate_schema(self) -> None:
+        """Apply schema bumps before any INSERT into entities or code_refs."""
+        version = self._schema_version()
+        if version < 2:
+            columns = self._table_columns("entities")
+            if "metadata" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE entities ADD COLUMN metadata JSON NOT NULL DEFAULT '{}' "
+                    "CHECK (json_valid(metadata))"
+                )
+            self._set_schema_version(2)
+            version = 2
+        if version < 3:
+            columns = self._table_columns("code_refs")
+            if "start_line" not in columns:
+                self._conn.execute("ALTER TABLE code_refs ADD COLUMN start_line INTEGER")
+            if "end_line" not in columns:
+                self._conn.execute("ALTER TABLE code_refs ADD COLUMN end_line INTEGER")
+            self._set_schema_version(3)
+            version = 3
+        if version < 4:
+            self._migrate_entity_metadata_json()
+            self._set_schema_version(4)
+
+    def _migrate_entity_metadata_json(self) -> None:
+        """Declared type JSON. Existing TEXT columns are rebuilt in place."""
+        rows = list(self._conn.execute("PRAGMA table_info(entities)"))
+        col = next((r for r in rows if r["name"] == "metadata"), None)
+        if col is None:
+            self._conn.execute(
+                "ALTER TABLE entities ADD COLUMN metadata JSON NOT NULL DEFAULT '{}' "
+                "CHECK (json_valid(metadata))"
+            )
+            return
+        if str(col["type"]).upper() == "JSON":
+            return
+        self._conn.commit()
+        self._conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute(
+                """
+                CREATE TABLE entities_new (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  description TEXT NOT NULL DEFAULT '',
+                  metadata JSON NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                INSERT INTO entities_new (id, name, description, metadata, created_at, updated_at)
+                SELECT id, name, description,
+                       CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+                       created_at, updated_at
+                FROM entities
+                """
+            )
+            self._conn.execute("DROP TABLE entities")
+            self._conn.execute("ALTER TABLE entities_new RENAME TO entities")
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def _schema_version(self) -> int:
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        try:
+            return int(row["value"]) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _set_schema_version(self, version: int) -> None:
+        self._conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(version),),
+        )
+
+    def _table_columns(self, table: str) -> set[str]:
+        return {
+            info["name"]
+            for info in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+
+    def _as_project_relative(self, path: str) -> str:
+        text = path.replace("\\", "/")
+        candidate = Path(text)
+        if not candidate.is_absolute():
+            return _norm_path(text)
+        try:
+            return candidate.resolve().relative_to(self.root.resolve()).as_posix()
+        except ValueError:
+            return text
 
     def _try_load_sqlite_vec(self) -> None:
         if sqlite_vec is None:
@@ -388,20 +546,29 @@ class Store:
             if by_name is not None and not eid:
                 existing = by_name
                 eid = by_name["id"]
+        metadata_json = _dump_entity_metadata(spec["metadata"]) if "metadata" in spec else None
         if existing is None:
             eid = eid or _id("e")
-            self._conn.execute(
-                "INSERT INTO entities(id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (eid, name, description, now, now),
-            )
+            if metadata_json is None:
+                self._conn.execute(
+                    "INSERT INTO entities(id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (eid, name, description, now, now),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO entities(id, name, description, metadata, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (eid, name, description, metadata_json, now, now),
+                )
         else:
             eid = existing["id"]
-            if spec.get("name") or spec.get("description") is not None:
+            if spec.get("name") or "description" in spec or metadata_json is not None:
                 self._conn.execute(
-                    "UPDATE entities SET name=?, description=?, updated_at=? WHERE id=?",
+                    "UPDATE entities SET name=?, description=?, metadata=?, updated_at=? WHERE id=?",
                     (
                         name or existing["name"],
                         description if "description" in spec else existing["description"],
+                        metadata_json if metadata_json is not None else existing["metadata"],
                         now,
                         eid,
                     ),
@@ -412,28 +579,29 @@ class Store:
                 (graph_id, eid),
             )
         if "code_refs" in spec:
+            refs = [_normalize_code_ref(ref) for ref in (spec.get("code_refs") or [])]
             self._conn.execute("DELETE FROM code_refs WHERE entity_id = ?", (eid,))
-            for ref in spec.get("code_refs") or []:
+            for ref in refs:
                 self._insert_code_ref_locked(eid, ref)
         elif spec.get("add_code_refs"):
-            for ref in spec["add_code_refs"]:
+            refs = [_normalize_code_ref(ref) for ref in spec["add_code_refs"]]
+            for ref in refs:
                 self._insert_code_ref_locked(eid, ref)
         self._embed_entity_locked(eid)
         return dict(self._conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone())
 
     def _insert_code_ref_locked(self, entity_id: str, ref: dict) -> None:
-        path = _norm_path(ref.get("path") or "")
-        if not path:
-            raise ValueError("code_ref.path is required")
+        prepared = _normalize_code_ref(ref)
+        prepared["path"] = self._as_project_relative(prepared["path"])
         self._conn.execute(
             "INSERT INTO code_refs(id, entity_id, path, start_line, end_line, note) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 _id("c"),
                 entity_id,
-                path,
-                ref.get("start_line"),
-                ref.get("end_line"),
-                ref.get("note") or "",
+                prepared["path"],
+                prepared["start_line"],
+                prepared["end_line"],
+                prepared["note"],
             ),
         )
 
@@ -450,12 +618,15 @@ class Store:
         if not eid:
             raise KeyError(entity_id)
         ent = dict(self._conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone())
+        ent["metadata"] = _load_entity_metadata(ent.get("metadata"))
         ent["code_refs"] = [
             dict(r)
             for r in self._conn.execute(
                 "SELECT * FROM code_refs WHERE entity_id = ? ORDER BY path", (eid,)
             ).fetchall()
         ]
+        for ref in ent["code_refs"]:
+            ref["path"] = self._as_project_relative(ref["path"])
         ent["meta_links"] = [
             dict(r)
             for r in self._conn.execute(
@@ -722,7 +893,7 @@ class Store:
 
     def _vector_search(self, query: str, items: list[dict], k: int) -> list[dict]:
         try:
-            qvec = self.embedder.embed([query])[0]
+            qvec = self.embedder.embed([query], input_type="query")[0]
         except Exception:
             return []
         if not qvec:
@@ -889,19 +1060,10 @@ class Store:
 
     # --- embeddings ---
 
-    def _embed_entity_locked(self, entity_id: str) -> None:
-        if self.cfg.embed_mode == "none":
-            return
-        row = self._conn.execute(
-            "SELECT name, description FROM entities WHERE id = ?", (entity_id,)
-        ).fetchone()
-        if row is None:
-            return
-        text = f"{row['name']}. {row['description']}".strip()
-        try:
-            vec = self.embedder.embed([text])[0]
-        except Exception:
-            return
+    def _entity_embed_text(self, name: str, description: str) -> str:
+        return f"{name}. {description}".strip()
+
+    def _write_entity_vector_locked(self, entity_id: str, vec: list[float]) -> None:
         if not vec:
             return
         self._conn.execute(
@@ -918,6 +1080,89 @@ class Store:
                 )
         except Exception:
             pass
+
+    def backfill_missing_embeddings(self) -> dict:
+        """Embed entities that have no row or an outdated model (no graph migration)."""
+        if self.cfg.embed_mode == "none":
+            return {"ok": True, "embedded": 0, "needed": 0, "skipped": "embed_mode none"}
+        if os.environ.get("ABSTRACTIFY_SKIP_EMBED_BACKFILL", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return {"ok": True, "embedded": 0, "skipped": "ABSTRACTIFY_SKIP_EMBED_BACKFILL"}
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, description FROM entities ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+            need: list[sqlite3.Row] = []
+            for row in rows:
+                existing = self._conn.execute(
+                    "SELECT model FROM entity_embeddings WHERE entity_id = ?",
+                    (row["id"],),
+                ).fetchone()
+                if existing is None or existing["model"] != self.embedder.name:
+                    need.append(row)
+
+        if not need:
+            return {"ok": True, "embedded": 0, "needed": 0, "total_entities": len(rows)}
+
+        chunk_size = min(64, max(1, self.cfg.embed_batch_size * 4))
+        embedded = 0
+        for offset in range(0, len(need), chunk_size):
+            chunk = need[offset : offset + chunk_size]
+            texts = [
+                self._entity_embed_text(row["name"], row["description"]) for row in chunk
+            ]
+            try:
+                vectors = self.embedder.embed(texts, input_type="document")
+            except Exception:
+                for row in chunk:
+                    try:
+                        vec = self.embedder.embed(
+                            [self._entity_embed_text(row["name"], row["description"])],
+                            input_type="document",
+                        )[0]
+                    except Exception:
+                        continue
+                    with self._lock:
+                        self._write_entity_vector_locked(row["id"], vec)
+                        embedded += 1
+                with self._lock:
+                    self._conn.commit()
+                continue
+            if len(vectors) != len(chunk):
+                continue
+            with self._lock:
+                for row, vec in zip(chunk, vectors):
+                    self._write_entity_vector_locked(row["id"], vec)
+                    embedded += 1
+                self._conn.commit()
+
+        return {
+            "ok": True,
+            "embedded": embedded,
+            "needed": len(need),
+            "total_entities": len(rows),
+            "embed_mode": self.cfg.embed_mode,
+            "embedder": self.embedder.name,
+        }
+
+    def _embed_entity_locked(self, entity_id: str) -> None:
+        if self.cfg.embed_mode == "none":
+            return
+        row = self._conn.execute(
+            "SELECT name, description FROM entities WHERE id = ?", (entity_id,)
+        ).fetchone()
+        if row is None:
+            return
+        text = self._entity_embed_text(row["name"], row["description"])
+        try:
+            vec = self.embedder.embed([text], input_type="document")[0]
+        except Exception:
+            return
+        self._write_entity_vector_locked(entity_id, vec)
 
     # --- example ---
 
@@ -981,9 +1226,14 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def open_store(root: Path) -> Store:
+def open_store(root: Path, *, backfill_embeddings: bool = True) -> Store:
     from abstractify.config import load_config
     from abstractify.embeddings import build_embedder
 
     cfg = load_config(root)
-    return Store(root, cfg, build_embedder(cfg, root))
+    store = Store(root, cfg, build_embedder(cfg, root))
+    if backfill_embeddings:
+        store._last_backfill_report = store.backfill_missing_embeddings()
+    else:
+        store._last_backfill_report = None
+    return store

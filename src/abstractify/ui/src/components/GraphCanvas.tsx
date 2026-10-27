@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import { graphLayoutKey } from "../graphLayoutKey";
 import type { Entity, GraphDetail } from "../types";
@@ -18,6 +18,23 @@ const COLLIDE_RADIUS = 150;
 const LINK_DISTANCE = 190;
 const CHARGE_STRENGTH = -1100;
 const DRAG_CLICK_THRESHOLD = 5;
+const MARK_SPACING = 100;
+const ARROW_LEN = 8;
+const ARROW_HALF_W = 3;
+/** Animated direction dots. */
+const DOT_DIAMETER = 6;
+const DOT_SPEED = 56;
+
+type EdgeMotion = "arrows" | "dots";
+const EDGE_MOTION_STORAGE_KEY = "abstractify.edgeMotion";
+
+function readEdgeMotion(): EdgeMotion {
+  try {
+    return localStorage.getItem(EDGE_MOTION_STORAGE_KEY) === "dots" ? "dots" : "arrows";
+  } catch {
+    return "arrows";
+  }
+}
 
 const STROKE_DEFAULT = "#20e3c8";
 const FILL_DEFAULT = "#0b141c";
@@ -168,6 +185,13 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
     SVGGElement,
     unknown
   > | null>(null);
+  const markLayerRef = useRef<d3.Selection<SVGPathElement, LinkDatum, SVGGElement, unknown> | null>(
+    null,
+  );
+  const redrawMarksRef = useRef<(() => void) | null>(null);
+  const [edgeMotion, setEdgeMotion] = useState<EdgeMotion>(readEdgeMotion);
+  const edgeMotionRef = useRef(edgeMotion);
+  edgeMotionRef.current = edgeMotion;
 
   useEffect(() => {
     const graph = graphRef.current;
@@ -234,6 +258,17 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
       .attr("stroke-width", 1.1)
       .attr("opacity", 0.9);
 
+    const marks = root
+      .append("g")
+      .attr("pointer-events", "none")
+      .selectAll("path")
+      .data(links)
+      .enter()
+      .append("path")
+      .attr("fill", STROKE_LINK_DEFAULT)
+      .attr("stroke", "none")
+      .attr("opacity", 0.9);
+
     const linkLabel = root
       .append("g")
       .selectAll("text")
@@ -246,14 +281,22 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
       .attr("text-anchor", "middle")
       .text((d) => d.relation.replaceAll("_", " "));
 
+    const flowLayout = graph.kind === "flow";
     const node = root
       .append("g")
       .selectAll("g")
       .data(nodes)
       .enter()
       .append("g")
-      .attr("cursor", "grab")
-      .call(
+      .attr("cursor", flowLayout ? "pointer" : "grab");
+
+    if (flowLayout) {
+      node.on("click", (event, d) => {
+        event.stopPropagation();
+        onSelectRef.current(d.id);
+      });
+    } else {
+      node.call(
         d3
           .drag<SVGGElement, NodeDatum>()
           .on("start", (event, d) => {
@@ -294,6 +337,7 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
             d.fy = null;
           }),
       );
+    }
 
     node
       .append("rect")
@@ -327,23 +371,29 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
     nodeLayerRef.current = node;
     linkLayerRef.current = link;
     linkLabelLayerRef.current = linkLabel;
+    markLayerRef.current = marks;
 
+    const redrawMarks = () => {
+      paintEdgeMarks(link, marks, edgeMotionRef.current, performance.now());
+    };
+    redrawMarksRef.current = redrawMarks;
+
+    const flowCurves = graph.kind === "flow";
     sim.on("tick", () => {
-      link.attr("d", (d) => {
-        const s = d.source as NodeDatum;
-        const t = d.target as NodeDatum;
-        return `M${s.x},${s.y} L${t.x},${t.y}`;
-      });
+      link.attr("d", (d) => (flowCurves ? flowCurvePath(d) : straightPath(d)));
       linkLabel.attr("x", (d) => mid(d, "x")).attr("y", (d) => mid(d, "y") - 6);
       node.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      redrawMarks();
     });
 
     return () => {
       sim.stop();
+      redrawMarksRef.current = null;
       nodeLayerRef.current = null;
       linksRef.current = [];
       linkLayerRef.current = null;
       linkLabelLayerRef.current = null;
+      markLayerRef.current = null;
     };
   }, [layoutKey]);
 
@@ -353,6 +403,7 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
     const linkLabel = linkLabelLayerRef.current;
     if (!node || !link || !linkLabel) return;
     applyGraphSelection(node, link, linkLabel, linksRef.current, selectedEntityId);
+    redrawMarksRef.current?.();
   }, [selectedEntityId, layoutKey]);
 
   useEffect(() => {
@@ -363,7 +414,48 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
     linksRef.current = [];
     linkLayerRef.current = null;
     linkLabelLayerRef.current = null;
+    markLayerRef.current = null;
+    redrawMarksRef.current = null;
   }, [layoutKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(EDGE_MOTION_STORAGE_KEY, edgeMotion);
+    } catch {
+      // Storage can be unavailable; the toggle still works for this visit.
+    }
+  }, [edgeMotion]);
+
+  useEffect(() => {
+    if (edgeMotion !== "dots") {
+      redrawMarksRef.current?.();
+      return;
+    }
+    let frame = 0;
+    const loop = () => {
+      redrawMarksRef.current?.();
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [edgeMotion]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "a") return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      setEdgeMotion((mode) => (mode === "arrows" ? "dots" : "arrows"));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -375,9 +467,137 @@ export function GraphCanvas({ graph, selectedEntityId, onSelectEntity }: Props) 
       ) : (
         <div className={styles.empty}>Select a graph</div>
       )}
+      {graph ? (
+        <div className={styles.motion} role="group" aria-label="Edge direction">
+          <button
+            type="button"
+            className={edgeMotion === "arrows" ? styles.motionOn : undefined}
+            aria-pressed={edgeMotion === "arrows"}
+            title="Static arrows (A)"
+            onClick={() => setEdgeMotion("arrows")}
+          >
+            Arrows
+          </button>
+          <button
+            type="button"
+            className={edgeMotion === "dots" ? styles.motionOn : undefined}
+            aria-pressed={edgeMotion === "dots"}
+            title="Moving dots (A)"
+            onClick={() => setEdgeMotion("dots")}
+          >
+            Dots
+          </button>
+        </div>
+      ) : null}
       <svg ref={svgRef} className={styles.svg} />
     </div>
   );
+}
+
+/** Intersection of the center-to-center segment with one card's axis-aligned box. */
+function borderScale(dx: number, dy: number): number {
+  const sx = dx === 0 ? Infinity : CARD_W / 2 / Math.abs(dx);
+  const sy = dy === 0 ? Infinity : CARD_H / 2 / Math.abs(dy);
+  return Math.min(sx, sy, 1);
+}
+
+function borderEndpoints(d: LinkDatum): { sx: number; sy: number; tx: number; ty: number } {
+  const s = d.source as NodeDatum;
+  const t = d.target as NodeDatum;
+  const x1 = s.x ?? 0;
+  const y1 = s.y ?? 0;
+  const x2 = t.x ?? 0;
+  const y2 = t.y ?? 0;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const scale = borderScale(dx, dy);
+  return {
+    sx: x1 + dx * scale,
+    sy: y1 + dy * scale,
+    tx: x2 - dx * scale,
+    ty: y2 - dy * scale,
+  };
+}
+
+/** Cubic Bézier that leaves and arrives horizontally (Flow only). */
+function flowCurvePath(d: LinkDatum): string {
+  const { sx, sy, tx, ty } = borderEndpoints(d);
+  const cx = sx + (tx - sx) * 0.5;
+  return `M${sx},${sy} C${cx},${sy} ${cx},${ty} ${tx},${ty}`;
+}
+
+function straightPath(d: LinkDatum): string {
+  const s = d.source as NodeDatum;
+  const t = d.target as NodeDatum;
+  return `M${s.x},${s.y} L${t.x},${t.y}`;
+}
+
+function arrowDistances(length: number): number[] {
+  const pts: number[] = [];
+  for (let dist = MARK_SPACING; dist < length - 8; dist += MARK_SPACING) pts.push(dist);
+  if (pts.length === 0 && length > 24) pts.push(length / 2);
+  return pts;
+}
+
+function dotDistances(length: number, now: number): number[] {
+  if (length < 8) return [];
+  const count = Math.max(1, Math.floor(length / MARK_SPACING));
+  const travel = ((now / 1000) * DOT_SPEED) % length;
+  const pts: number[] = [];
+  for (let i = 0; i < count; i++) pts.push((travel + i * MARK_SPACING) % length);
+  return pts;
+}
+
+function tangentAt(path: SVGPathElement, length: number, dist: number): { x: number; y: number } {
+  const ahead = path.getPointAtLength(Math.min(length, dist + 6));
+  const behind = path.getPointAtLength(Math.max(0, dist - 6));
+  let dx = ahead.x - behind.x;
+  let dy = ahead.y - behind.y;
+  const mag = Math.hypot(dx, dy) || 1;
+  dx /= mag;
+  dy /= mag;
+  return { x: dx, y: dy };
+}
+
+function arrowMark(path: SVGPathElement, length: number, dist: number): string {
+  const p = path.getPointAtLength(dist);
+  const dir = tangentAt(path, length, dist);
+  const px = -dir.y;
+  const py = dir.x;
+  const tipX = p.x + dir.x * (ARROW_LEN * 0.55);
+  const tipY = p.y + dir.y * (ARROW_LEN * 0.55);
+  const bx = p.x - dir.x * (ARROW_LEN * 0.45);
+  const by = p.y - dir.y * (ARROW_LEN * 0.45);
+  return `M${tipX},${tipY} L${bx + px * ARROW_HALF_W},${by + py * ARROW_HALF_W} L${bx - px * ARROW_HALF_W},${by - py * ARROW_HALF_W} Z`;
+}
+
+function dotMark(path: SVGPathElement, dist: number): string {
+  const p = path.getPointAtLength(dist);
+  const r = DOT_DIAMETER / 2;
+  return `M${p.x - r},${p.y} a${r},${r} 0 1,0 ${DOT_DIAMETER},0 a${r},${r} 0 1,0 ${-DOT_DIAMETER},0`;
+}
+
+function paintEdgeMarks(
+  link: d3.Selection<SVGPathElement, LinkDatum, SVGGElement, unknown>,
+  marks: d3.Selection<SVGPathElement, LinkDatum, SVGGElement, unknown>,
+  mode: EdgeMotion,
+  now: number,
+) {
+  const markNodes = marks.nodes();
+  link.each(function (_, i) {
+    const path = this;
+    const mark = markNodes[i];
+    if (!mark || !path.getAttribute("d")) return;
+    const length = path.getTotalLength();
+    const dists = mode === "arrows" ? arrowDistances(length) : dotDistances(length, now);
+    const d =
+      mode === "arrows"
+        ? dists.map((dist) => arrowMark(path, length, dist)).join(" ")
+        : dists.map((dist) => dotMark(path, dist)).join(" ");
+    mark.setAttribute("d", d);
+    mark.setAttribute("fill", path.getAttribute("stroke") || STROKE_LINK_DEFAULT);
+    mark.setAttribute("opacity", path.getAttribute("opacity") || "0.9");
+  });
 }
 
 function mid(d: LinkDatum, axis: "x" | "y"): number {
